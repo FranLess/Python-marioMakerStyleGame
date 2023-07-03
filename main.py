@@ -8,7 +8,7 @@ class Main:
         pygame.init()
         self.display_surface = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
         self.clock = pygame.time.Clock()
-        self.editor = Editor()
+        self.editor = Editor() 
 
         #cursor
         surf = load('./graphics/cursors/mouse.png').convert_alpha()

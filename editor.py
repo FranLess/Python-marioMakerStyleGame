@@ -8,6 +8,7 @@ from setting import *
 from support import *
 
 from menu import Menu
+from timery import Timer
 
 
 class Editor:
@@ -40,6 +41,7 @@ class Editor:
         # objects
         self.canvas_objects = pygame.sprite.Group()
         self.object_drag_active = False
+        self.object_timer = Timer(400)
 
         # Player
         CanvasObject(
@@ -50,9 +52,25 @@ class Editor:
             group=self.canvas_objects,
         )
 
+        # sky
+        pos = (WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2)
+
+        self.sky_handle = CanvasObject(
+            pos=pos,
+            frames=[self.sky_handle_surf],
+            tile_id=1,
+            origin=self.origin,
+            group=self.canvas_objects,
+        )
+
     # SUPPORT
     def imports(self):
-        self.water_bottom = load_image("./graphics/terrain/water/water_bottom.png")
+        self.water_bottom = load_image(
+            "./graphics/terrain/water/water_bottom.png"
+        ).convert_alpha()
+        self.sky_handle_surf = load_image(
+            "./graphics/cursors/handle.png"
+        ).convert_alpha()
 
         # ANIMATIONS
         self.animations = {}
@@ -64,6 +82,10 @@ class Editor:
                     "frames": graphics,
                     "lenght": len(graphics),
                 }
+        #preview
+        self.preview_surfs = {
+            key: load_image(value['preview']) for key, value in EDITOR_DATA.items() if value['preview']
+        }
 
     def get_current_cell(self):
         distance_to_origin = vector(mouse_position()) - self.origin
@@ -123,6 +145,11 @@ class Editor:
             if value["frame_index"] >= value["lenght"]:
                 value["frame_index"] = 0
 
+    def mouse_on_object(self):
+        for sprite in self.canvas_objects:
+            if sprite.rect.collidepoint(mouse_position()):
+                return sprite
+
     # INPUT
     def event_loop(self):
         for event in pygame.event.get():
@@ -131,13 +158,13 @@ class Editor:
                 sys.exit()
 
             self.pan_input(event)
-            
+
             self.selection_hotkeys(event)
-            
+
             self.menu_click(event)
 
             self.object_drag(event)
-            
+
             self.canvas_add(event)
 
     def pan_input(self, event):
@@ -184,7 +211,7 @@ class Editor:
         if event.type == pygame.MOUSEBUTTONUP and self.object_drag_active:
             for sprite in self.canvas_objects.sprites():
                 if sprite.selected:
-                    sprite.end_drag(origin)
+                    sprite.end_drag(self.origin)
                     self.object_drag_active = False
 
     # DRAWING OBJECTS
@@ -195,15 +222,26 @@ class Editor:
             and not self.object_drag_active
         ):
             current_cell = self.get_current_cell()
-
-            if current_cell != self.last_selected_cell:
-                if current_cell in self.canvas_data:
-                    self.canvas_data[current_cell].add_id(self.selection_index)
-                else:
-                    self.canvas_data[current_cell] = CanvasTile(self.selection_index)
-
-                self.check_neighbors(current_cell)
-                self.last_selected_cell = current_cell
+            if EDITOR_DATA[self.selection_index]["type"] == "tile":
+                if current_cell != self.last_selected_cell:
+                    if current_cell in self.canvas_data:
+                        self.canvas_data[current_cell].add_id(self.selection_index)
+                    else:
+                        self.canvas_data[current_cell] = CanvasTile(
+                            self.selection_index
+                        )
+            else:
+                if not self.object_timer.active:
+                    CanvasObject(
+                        pos=mouse_position(),
+                        frames=self.animations[self.selection_index]["frames"],
+                        tile_id=self.selection_index,
+                        origin=self.origin,
+                        group=self.canvas_objects,
+                    )
+                    self.object_timer.activate()
+            self.check_neighbors(current_cell)
+            self.last_selected_cell = current_cell
 
     def draw_level(self):
         for cell_pos, tile in self.canvas_data.items():
@@ -256,6 +294,13 @@ class Editor:
             and not self.menu.rect.collidepoint(mouse_position())
             and self.canvas_data
         ):
+            # delete tile
+            selected_object = self.mouse_on_object()
+            if selected_object and EDITOR_DATA[selected_object.tile_id][
+                "style"
+            ] not in ("player", "sky"):
+                selected_object.kill()
+            # delete object
             current_cell = self.get_current_cell()
 
             if current_cell in self.canvas_data:
@@ -265,6 +310,84 @@ class Editor:
                     del self.canvas_data[current_cell]
 
             self.check_neighbors(current_cell)
+
+    def preview(self):
+        if self.menu.rect.collidepoint(mouse_position()):
+            return
+
+        selected_object = self.mouse_on_object()
+
+        if selected_object:
+            rect = selected_object.rect.inflate(10, 10)
+            color = "black"
+            width = 3
+            size = 15
+
+            topleft = (
+                (rect.left, rect.top + size),
+                rect.topleft,
+                (rect.left + size, rect.top)
+            )
+            topright = (
+                (rect.right, rect.top + size),
+                rect.topright,
+                (rect.right - size, rect.top)
+            )
+            bottomleft = (
+                (rect.left, rect.bottom - size),
+                rect.bottomleft,
+                (rect.left + size, rect.bottom)
+            )
+            bottomright = (
+                (rect.right, rect.bottom - size),
+                rect.bottomright,
+                (rect.right - size, rect.bottom)
+            )
+            pygame.draw.lines(
+                self.display_surface,
+                color,
+                False,
+                topright,
+                width,
+            )
+            pygame.draw.lines(
+                self.display_surface,
+                color,
+                False,
+                bottomleft,
+                width,
+            )
+            pygame.draw.lines(
+                self.display_surface,
+                color,
+                False,
+                bottomright,
+                width,
+            )
+            pygame.draw.lines(
+                self.display_surface,
+                color,
+                False,
+                topleft,
+                width,
+            )
+            # draw lines around objects when selected
+
+        else:
+            type_dict = {
+                key:value['type'] for key, value in EDITOR_DATA.items()
+            }
+            surf = self.preview_surfs[self.selection_index].copy()
+            surf.set_alpha(200)
+            # preview of the 
+            if type_dict[self.selection_index] == 'tile':
+            # tile 
+                current_cell = self.get_current_cell()
+                rect = surf.get_rect(topleft = self.origin + vector(current_cell) * TILE_SIZE)
+            else:
+            # object
+                rect = surf.get_rect(center = mouse_position())
+            self.display_surface.blit(surf, rect)
 
     # DRAWING GUIDE LINES
     def draw_tile_lines(self):
@@ -302,9 +425,11 @@ class Editor:
         pygame.draw.circle(self.display_surface, "red", self.origin, 10)
         self.draw_level()
         self.canvas_remove()
+        self.preview()
 
         # updating
         self.animations_update(dt)
+        self.object_timer.update()
 
         # menu
         self.menu.display(self.selection_index)
@@ -375,6 +500,8 @@ class CanvasObject(pygame.sprite.Sprite):
     def __init__(self, pos, frames, tile_id, origin, group):
         super().__init__(group)
 
+        # setup
+        self.tile_id = tile_id
         # animations
         self.frames = frames
         self.frames_index = 0
@@ -393,6 +520,7 @@ class CanvasObject(pygame.sprite.Sprite):
 
     def end_drag(self, origin):
         self.selected = False
+        self.distance_to_origin = vector(self.rect.topleft) - origin
 
     def drag(self):
         if self.selected:

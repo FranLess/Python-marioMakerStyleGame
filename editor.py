@@ -37,19 +37,32 @@ class Editor:
         # menu
         self.menu = Menu()
 
+        # objects
+        self.canvas_objects = pygame.sprite.Group()
+        self.object_drag_active = False
+
+        # Player
+        CanvasObject(
+            pos=(200, WINDOW_HEIGHT / 2),
+            frames=self.animations[0]["frames"],
+            tile_id=0,
+            origin=self.origin,
+            group=self.canvas_objects,
+        )
+
     # SUPPORT
     def imports(self):
         self.water_bottom = load_image("./graphics/terrain/water/water_bottom.png")
 
-        #ANIMATIONS
+        # ANIMATIONS
         self.animations = {}
         for key, value in EDITOR_DATA.items():
-            if value['graphics']:
-                graphics = import_folder(value['graphics'])
+            if value["graphics"]:
+                graphics = import_folder(value["graphics"])
                 self.animations[key] = {
-                    'frame_index': 0,
-                    'frames': graphics,
-                    'lenght': len(graphics)
+                    "frame_index": 0,
+                    "frames": graphics,
+                    "lenght": len(graphics),
                 }
 
     def get_current_cell(self):
@@ -72,7 +85,7 @@ class Editor:
         local_cluster = [
             (
                 cell_position[0] + col - int(cluster_size / 2),
-                cell_position[1] + row - int(cluster_size / 2)
+                cell_position[1] + row - int(cluster_size / 2),
             )
             for col in range(cluster_size)
             for row in range(cluster_size)
@@ -96,7 +109,6 @@ class Editor:
                 # terrain neighbors
                 if self.canvas_data[neighbor_cell].has_terrain:
                     self.canvas_data[cell].terrain_neighbors.append(name)
-                    print(self.canvas_data[cell].terrain_neighbors, "\n")
                 # water neighbors
                 if (
                     self.canvas_data[neighbor_cell].has_water
@@ -105,18 +117,83 @@ class Editor:
                 ):
                     self.canvas_data[cell].water_on_top = True
 
-        print(self.canvas_data, "\n")
-
     def animations_update(self, dt):
         for value in self.animations.values():
-            value['frame_index'] += ANIMATION_SPEED * dt
-            if value['frame_index'] >= value['lenght']:
-                value['frame_index'] = 0
+            value["frame_index"] += ANIMATION_SPEED * dt
+            if value["frame_index"] >= value["lenght"]:
+                value["frame_index"] = 0
+
+    # INPUT
+    def event_loop(self):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            self.pan_input(event)
             
+            self.selection_hotkeys(event)
+            
+            self.menu_click(event)
+
+            self.object_drag(event)
+            
+            self.canvas_add(event)
+
+    def pan_input(self, event):
+        # middle mouse button pressed / released
+        if event.type == pygame.MOUSEBUTTONDOWN and mouse_buttons()[1]:
+            self.pan_active = True
+            self.pan_offset = vector(mouse_position()) - self.origin
+        if not mouse_buttons()[1]:
+            self.pan_active = False
+
+        # mouse wheel
+        if event.type == pygame.MOUSEWHEEL:
+            if key_pressed()[pygame.K_LCTRL]:
+                self.origin.x -= event.y * 50
+            else:
+                self.origin.y -= event.y * 50
+
+        # panning update
+        if self.pan_active:
+            self.origin = vector(mouse_position()) - self.pan_offset
+
+    def selection_hotkeys(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_RIGHT:
+                self.selection_index += 1
+            if event.key == pygame.K_LEFT:
+                self.selection_index -= 1
+        self.selection_index = max(2, min(self.selection_index, 18))
+
+    def menu_click(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            for button in self.menu.buttons.sprites():
+                if button.rect.collidepoint(mouse_position()):
+                    self.selection_index = self.menu.click(
+                        mouse_position(), mouse_buttons()
+                    )
+
+    def object_drag(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and mouse_buttons()[0]:
+            for sprite in self.canvas_objects.sprites():
+                if sprite.rect.collidepoint(event.pos):
+                    sprite.start_drag()
+                    self.object_drag_active = True
+        if event.type == pygame.MOUSEBUTTONUP and self.object_drag_active:
+            for sprite in self.canvas_objects.sprites():
+                if sprite.selected:
+                    sprite.end_drag(origin)
+                    self.object_drag_active = False
 
     # DRAWING OBJECTS
     def canvas_add(self, event):
-        if mouse_buttons()[0] and not self.menu.rect.collidepoint(mouse_position()):
+        if (
+            mouse_buttons()[0]
+            and not self.menu.rect.collidepoint(mouse_position())
+            and not self.object_drag_active
+        ):
             current_cell = self.get_current_cell()
 
             if current_cell != self.last_selected_cell:
@@ -144,78 +221,50 @@ class Editor:
                 if tile.water_on_top:
                     self.display_surface.blit(self.water_bottom, pos)
                 else:
-                    frames = self.animations[3]['frames']
-                    index = int(self.animations[3]['frame_index'])
+                    frames = self.animations[3]["frames"]
+                    index = int(self.animations[3]["frame_index"])
                     surf = frames[index]
                     self.display_surface.blit(surf, pos)
             # adding coins
             if tile.coin:
-                frames = self.animations[tile.coin]['frames']
-                index = int(self.animations[tile.coin]['frame_index'])
+                frames = self.animations[tile.coin]["frames"]
+                index = int(self.animations[tile.coin]["frame_index"])
                 surf = frames[index]
-                self.display_surface.blit(surf, pos)
+                rect = surf.get_rect(
+                    center=(pos[0] + TILE_SIZE // 2, pos[1] + TILE_SIZE // 2)
+                )
+                self.display_surface.blit(surf, rect)
             # adding enemys
             if tile.enemy:
-                frames = self.animations[tile.enemy]['frames']
-                index = int(self.animations[tile.enemy]['frame_index'])
+                frames = self.animations[tile.enemy]["frames"]
+                index = int(self.animations[tile.enemy]["frame_index"])
                 surf = frames[index]
-                self.display_surface.blit(surf, pos)
+                rect = surf.get_rect(
+                    midbottom=(pos[0] + TILE_SIZE // 2, pos[1] + TILE_SIZE)
+                )
+                self.display_surface.blit(surf, rect)
             # adding palms
             # if tile.has_terrain:
             #     test_surf = pygame.Surface((TILE_SIZE, TILE_SIZE))
             #     test_surf.fill('brown')
             #     self.display_surface.blit(test_surf, pos)
+        self.canvas_objects.draw(self.display_surface)
 
-   
-    # INPUT
-    def event_loop(self):
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+    def canvas_remove(self):
+        if (
+            mouse_buttons()[2]
+            and not self.menu.rect.collidepoint(mouse_position())
+            and self.canvas_data
+        ):
+            current_cell = self.get_current_cell()
 
-            self.pan_input(event)
-            self.selection_hotkeys(event)
-            self.menu_click(event)
-            self.canvas_add(event)
+            if current_cell in self.canvas_data:
+                self.canvas_data[current_cell].remove_id(self.selection_index)
 
-    # PAN INPUT
-    def pan_input(self, event):
-        # middle mouse button pressed / released
-        if event.type == pygame.MOUSEBUTTONDOWN and mouse_buttons()[1]:
-            self.pan_active = True
-            self.pan_offset = vector(mouse_position()) - self.origin
-        if not mouse_buttons()[1]:
-            self.pan_active = False
+                if self.canvas_data[current_cell].is_empty:
+                    del self.canvas_data[current_cell]
 
-        # mouse wheel
-        if event.type == pygame.MOUSEWHEEL:
-            if key_pressed()[pygame.K_LCTRL]:
-                self.origin.x -= event.y * 50
-            else:
-                self.origin.y -= event.y * 50
-
-        # panning update
-        if self.pan_active:
-            self.origin = vector(mouse_position()) - self.pan_offset
-
-    # SELECTION HOTKEYS
-    def selection_hotkeys(self, event):
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_RIGHT:
-                self.selection_index += 1
-            if event.key == pygame.K_LEFT:
-                self.selection_index -= 1
-        self.selection_index = max(2, min(self.selection_index, 18))
-
-    # CLICK ON MENU
-    def menu_click(self, event):
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            for button in self.menu.buttons.sprites():
-                if button.rect.collidepoint(mouse_position()):
-                    self.selection_index = self.menu.click(
-                        mouse_position(), mouse_buttons()
-                    )
+            self.check_neighbors(current_cell)
 
     # DRAWING GUIDE LINES
     def draw_tile_lines(self):
@@ -252,12 +301,16 @@ class Editor:
         self.draw_tile_lines()
         pygame.draw.circle(self.display_surface, "red", self.origin, 10)
         self.draw_level()
+        self.canvas_remove()
 
-        #updating
+        # updating
         self.animations_update(dt)
 
         # menu
         self.menu.display(self.selection_index)
+
+        # objects update
+        self.canvas_objects.update(dt, self.origin)
 
 
 class CanvasTile:
@@ -281,6 +334,8 @@ class CanvasTile:
 
         self.add_id(tile_id)
 
+        self.is_empty = False
+
     def add_id(self, tile_id):
         options = {key: value["style"] for key, value in EDITOR_DATA.items()}
         match options[tile_id]:
@@ -292,3 +347,68 @@ class CanvasTile:
                 self.coin = tile_id
             case "enemy":
                 self.enemy = tile_id
+
+    def remove_id(self, tile_id):
+        options = {key: value["style"] for key, value in EDITOR_DATA.items()}
+        match options[tile_id]:
+            case "terrain":
+                self.has_terrain = False
+            case "water":
+                self.has_water = False
+            case "coin":
+                self.coin = None
+            case "enemy":
+                self.enemy = None
+        self.check_content()
+
+    def check_content(self):
+        if (
+            not self.has_terrain
+            and not self.has_water
+            and not self.coin
+            and not self.enemy
+        ):
+            self.is_empty = True
+
+
+class CanvasObject(pygame.sprite.Sprite):
+    def __init__(self, pos, frames, tile_id, origin, group):
+        super().__init__(group)
+
+        # animations
+        self.frames = frames
+        self.frames_index = 0
+
+        self.image = self.frames[self.frames_index]
+        self.rect = self.image.get_rect(center=pos)
+
+        # movement
+        self.distance_to_origin = vector(self.rect.topleft) - origin
+        self.selected = False
+        self.mouse_offset = vector()
+
+    def start_drag(self):
+        self.selected = True
+        self.mouse_offset = vector(mouse_position()) - vector(self.rect.topleft)
+
+    def end_drag(self, origin):
+        self.selected = False
+
+    def drag(self):
+        if self.selected:
+            self.rect.topleft = mouse_position() - self.mouse_offset
+
+    def animate(self, dt):
+        self.frames_index += ANIMATION_SPEED * dt
+        if self.frames_index >= len(self.frames):
+            self.frames_index = 0
+        self.image = self.frames[int(self.frames_index)]
+        self.rect = self.image.get_rect(midbottom=self.rect.midbottom)
+
+    def pan_pos(self, origin):
+        self.rect.topleft = origin + self.distance_to_origin
+
+    def update(self, dt, origin):
+        self.animate(dt)
+        self.pan_pos(origin)
+        self.drag()

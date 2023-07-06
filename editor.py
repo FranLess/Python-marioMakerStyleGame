@@ -13,9 +13,10 @@ from timery import Timer
 
 
 class Editor:
-    def __init__(self, land_tiles) -> None:
+    def __init__(self, land_tiles, switch) -> None:
         # main setup
         self.display_surface = pygame.display.get_surface()
+        self.switch = switch
         self.canvas_data = {}
 
         # imports
@@ -215,7 +216,7 @@ class Editor:
                     if obj in [
                         key
                         for key, value in EDITOR_DATA.items()
-                        if value.style == "palm bg"
+                        if value['style'] == "palm_bg"
                     ]:
                         layers["bg_palms"][(int(x + offset.x), int(y + offset.y))] = obj
                     else:
@@ -231,7 +232,7 @@ class Editor:
                 sys.exit()
 
             if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
-                self.create_grid()
+                self.switch(self.create_grid())
 
             self.pan_input(event)
 
@@ -636,7 +637,7 @@ class CanvasTile:
             self.is_empty = True
 
     def get_water(self):
-        return "bottom" if not self.water_on_top else "top"
+        return "bottom" if self.water_on_top else "top"
 
     def get_terrain(self):
         return "".join(self.terrain_neighbors)

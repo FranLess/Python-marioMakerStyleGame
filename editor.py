@@ -1,4 +1,5 @@
 import pygame, sys, numbers
+from random import choice, randint
 from pygame.math import Vector2 as vector
 from pygame.mouse import get_pressed as mouse_buttons
 from pygame.mouse import get_pos as mouse_position
@@ -21,6 +22,13 @@ class Editor:
         self.land_tiles = land_tiles
         self.imports()
 
+        # clouds
+        self.current_clouds = []
+        self.cloud_surf = import_folder("./graphics/clouds")
+        self.cloud_timer = pygame.USEREVENT + 1
+        pygame.time.set_timer(self.cloud_timer, 200)
+        self.startup_clouds()
+
         # navigation
         self.origin = vector()
         self.pan_active = False
@@ -40,6 +48,8 @@ class Editor:
 
         # objects
         self.canvas_objects = pygame.sprite.Group()
+        self.foreground = pygame.sprite.Group()
+        self.background = pygame.sprite.Group()
         self.object_drag_active = False
         self.object_timer = Timer(400)
 
@@ -49,7 +59,7 @@ class Editor:
             frames=self.animations[0]["frames"],
             tile_id=0,
             origin=self.origin,
-            group=self.canvas_objects,
+            group=[self.canvas_objects, self.foreground],
         )
 
         # sky
@@ -60,7 +70,7 @@ class Editor:
             frames=[self.sky_handle_surf],
             tile_id=1,
             origin=self.origin,
-            group=self.canvas_objects,
+            group=[self.canvas_objects, self.background],
         )
 
     # SUPPORT
@@ -82,13 +92,19 @@ class Editor:
                     "frames": graphics,
                     "lenght": len(graphics),
                 }
-        #preview
+        # preview
         self.preview_surfs = {
-            key: load_image(value['preview']) for key, value in EDITOR_DATA.items() if value['preview']
+            key: load_image(value["preview"])
+            for key, value in EDITOR_DATA.items()
+            if value["preview"]
         }
 
-    def get_current_cell(self):
-        distance_to_origin = vector(mouse_position()) - self.origin
+    def get_current_cell(self, obj=None):
+        distance_to_origin = (
+            vector(mouse_position()) - self.origin
+            if not obj
+            else vector(obj.distance_to_origin) - self.origin
+        )
         col = (
             int(distance_to_origin.x / TILE_SIZE)
             if distance_to_origin.x > 0
@@ -150,12 +166,72 @@ class Editor:
             if sprite.rect.collidepoint(mouse_position()):
                 return sprite
 
+    def create_grid(self):
+        for tile in self.canvas_data.values():
+            tile.objects = []
+
+        for obj in self.canvas_objects:
+            current_cell = self.get_current_cell(obj)
+            offset = vector(
+                vector(obj.distance_to_origin) - (vector(current_cell) * TILE_SIZE)
+            )
+
+            if current_cell in self.canvas_data:
+                self.canvas_data[current_cell].add_id(obj.tile_id, offset)
+            else:
+                self.canvas_data[current_cell] = CanvasTile(obj.tile_id, offset)
+
+            # grid offset
+            left = sorted(self.canvas_data.keys(), key=lambda tile: tile[0])[0][0]
+            top = sorted(self.canvas_data.keys(), key=lambda tile: tile[1])[0][1]
+        # create an empty grid
+        layers = {
+            "water": {},
+            "bg_palms": {},
+            "terrain": {},
+            "enemies": {},
+            "coins": {},
+            "fg_objects": {},
+        }
+
+        # fil the grid
+        for tile_pos, tile in self.canvas_data.items():
+            col_adjusted = tile_pos[0] - left
+            row_adjusted = tile_pos[1] - top
+            x = col_adjusted * TILE_SIZE
+            y = row_adjusted * TILE_SIZE
+            if tile.has_water:
+                layers["water"][(x, y)] = tile.get_water()
+            if tile.has_terrain:
+                layers["terrain"][(x, y)] = (
+                    tile.get_terrain() if tile.get_terrain() in self.land_tiles else "X"
+                )
+            if tile.coin:
+                layers["coins"][(x + TILE_SIZE // 2, y + TILE_SIZE // 2)] = tile.coin
+            if tile.enemy:
+                layers["enemies"][(x, y)] = tile.enemy
+            if tile.objects:
+                for obj, offset in tile.objects:
+                    if obj in [
+                        key
+                        for key, value in EDITOR_DATA.items()
+                        if value.style == "palm bg"
+                    ]:
+                        layers["bg_palms"][(int(x + offset.x), int(y + offset.y))] = obj
+                    else:
+                        layers["fg_objects"][(int(x + offset.x), int(y + offset.y))] = obj
+
+        return layers 
+
     # INPUT
     def event_loop(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
+
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+                self.create_grid()
 
             self.pan_input(event)
 
@@ -166,6 +242,8 @@ class Editor:
             self.object_drag(event)
 
             self.canvas_add(event)
+
+            self.create_clouds(event)
 
     def pan_input(self, event):
         # middle mouse button pressed / released
@@ -232,21 +310,22 @@ class Editor:
                         )
             else:
                 if not self.object_timer.active:
+                    groups = [self.canvas_objects, self.background] if EDITOR_DATA[self.selection_index]['style'] == 'palm_bg' else [self.canvas_objects, self.foreground]
                     CanvasObject(
                         pos=mouse_position(),
                         frames=self.animations[self.selection_index]["frames"],
                         tile_id=self.selection_index,
                         origin=self.origin,
-                        group=self.canvas_objects,
+                        group=groups,
                     )
                     self.object_timer.activate()
             self.check_neighbors(current_cell)
             self.last_selected_cell = current_cell
 
     def draw_level(self):
+        self.background.draw(self.display_surface)
         for cell_pos, tile in self.canvas_data.items():
             pos = self.origin + vector(cell_pos) * TILE_SIZE
-
             # adding terrain
             if tile.has_terrain:
                 terrain_string = "".join(tile.terrain_neighbors)
@@ -286,7 +365,7 @@ class Editor:
             #     test_surf = pygame.Surface((TILE_SIZE, TILE_SIZE))
             #     test_surf.fill('brown')
             #     self.display_surface.blit(test_surf, pos)
-        self.canvas_objects.draw(self.display_surface)
+        self.foreground.draw(self.display_surface)
 
     def canvas_remove(self):
         if (
@@ -326,22 +405,22 @@ class Editor:
             topleft = (
                 (rect.left, rect.top + size),
                 rect.topleft,
-                (rect.left + size, rect.top)
+                (rect.left + size, rect.top),
             )
             topright = (
                 (rect.right, rect.top + size),
                 rect.topright,
-                (rect.right - size, rect.top)
+                (rect.right - size, rect.top),
             )
             bottomleft = (
                 (rect.left, rect.bottom - size),
                 rect.bottomleft,
-                (rect.left + size, rect.bottom)
+                (rect.left + size, rect.bottom),
             )
             bottomright = (
                 (rect.right, rect.bottom - size),
                 rect.bottomright,
-                (rect.right - size, rect.bottom)
+                (rect.right - size, rect.bottom),
             )
             pygame.draw.lines(
                 self.display_surface,
@@ -374,20 +453,77 @@ class Editor:
             # draw lines around objects when selected
 
         else:
-            type_dict = {
-                key:value['type'] for key, value in EDITOR_DATA.items()
-            }
+            type_dict = {key: value["type"] for key, value in EDITOR_DATA.items()}
             surf = self.preview_surfs[self.selection_index].copy()
             surf.set_alpha(200)
-            # preview of the 
-            if type_dict[self.selection_index] == 'tile':
-            # tile 
+            # preview of the
+            if type_dict[self.selection_index] == "tile":
+                # tile
                 current_cell = self.get_current_cell()
-                rect = surf.get_rect(topleft = self.origin + vector(current_cell) * TILE_SIZE)
+                rect = surf.get_rect(
+                    topleft=self.origin + vector(current_cell) * TILE_SIZE
+                )
             else:
-            # object
-                rect = surf.get_rect(center = mouse_position())
+                # object
+                rect = surf.get_rect(center=mouse_position())
             self.display_surface.blit(surf, rect)
+
+    def display_sky(self, dt):
+        self.display_surface.fill(SKY_COLOR)
+        y = self.sky_handle.rect.centery
+        # horizon lines
+        if y > 0:
+            horizon_rect1 = pygame.Rect(0, y - 10, WINDOW_WIDTH, 10)
+            horizon_rect2 = pygame.Rect(0, y - 16, WINDOW_WIDTH, 4)
+            horizon_rect3 = pygame.Rect(0, y - 20, WINDOW_WIDTH, 2)
+            pygame.draw.rect(self.display_surface, HORIZON_TOP_COLOR, horizon_rect1)
+            pygame.draw.rect(self.display_surface, HORIZON_TOP_COLOR, horizon_rect2)
+            pygame.draw.rect(self.display_surface, HORIZON_TOP_COLOR, horizon_rect3)
+
+        self.display_clouds(dt, y)
+
+        # sea
+        if 0 < y < WINDOW_HEIGHT:
+            sea_rect = pygame.Rect(0, y, WINDOW_WIDTH, WINDOW_HEIGHT)
+            pygame.draw.rect(self.display_surface, SEA_COLOR, sea_rect)
+            pygame.draw.line(
+                self.display_surface, HORIZON_COLOR, (0, y), (WINDOW_WIDTH, y), 3
+            )
+        if y < 0:
+            self.display_surface.fill(SEA_COLOR)
+
+    def display_clouds(self, dt, y):
+        if not y > 0:
+            return
+
+        for cloud in self.current_clouds:
+            cloud["pos"][0] -= cloud["speed"] * dt
+            x = cloud["pos"][0]
+            y = y - cloud["pos"][1]
+            self.display_surface.blit(cloud["surf"], (x, y))
+
+    def create_clouds(self, event):
+        if event.type == self.cloud_timer:
+            surf = choice(self.cloud_surf)
+            surf = pygame.transform.scale2x(surf) if choice([False, True]) else surf
+            pos = [WINDOW_WIDTH + randint(50, 100), randint(0, WINDOW_HEIGHT)]
+            speed = randint(20, 50)
+            self.current_clouds.append({"surf": surf, "pos": pos, "speed": speed})
+
+            self.current_clouds = [
+                cloud for cloud in self.current_clouds if cloud["pos"][0] > -400
+            ]
+
+    def startup_clouds(self):
+        for i in range(20):
+            surf = (
+                pygame.transform.scale2x(choice(self.cloud_surf))
+                if choice([True, False])
+                else choice(self.cloud_surf)
+            )
+            pos = [randint(0, WINDOW_WIDTH), randint(0, WINDOW_HEIGHT)]
+            speed = randint(20, 50)
+            self.current_clouds.append({"surf": surf, "pos": pos, "speed": speed})
 
     # DRAWING GUIDE LINES
     def draw_tile_lines(self):
@@ -417,10 +553,11 @@ class Editor:
 
     # RUNNING THE EDITOR
     def run(self, dt):
-        self.display_surface.fill("gray")
         self.event_loop()
 
         # drawing
+        self.display_surface.fill("gray")
+        self.display_sky(dt)
         self.draw_tile_lines()
         pygame.draw.circle(self.display_surface, "red", self.origin, 10)
         self.draw_level()
@@ -439,7 +576,7 @@ class Editor:
 
 
 class CanvasTile:
-    def __init__(self, tile_id) -> None:
+    def __init__(self, tile_id, offset=vector()) -> None:
         # terrain
         self.has_terrain = False
         self.terrain_neighbors = []
@@ -457,11 +594,11 @@ class CanvasTile:
         # objects
         self.objects = []
 
-        self.add_id(tile_id)
+        self.add_id(tile_id, offset)
 
         self.is_empty = False
 
-    def add_id(self, tile_id):
+    def add_id(self, tile_id, offset=vector()):
         options = {key: value["style"] for key, value in EDITOR_DATA.items()}
         match options[tile_id]:
             case "terrain":
@@ -472,6 +609,9 @@ class CanvasTile:
                 self.coin = tile_id
             case "enemy":
                 self.enemy = tile_id
+            case _:
+                if (tile_id, offset) not in self.objects:
+                    self.objects.append((tile_id, offset))
 
     def remove_id(self, tile_id):
         options = {key: value["style"] for key, value in EDITOR_DATA.items()}
@@ -494,6 +634,12 @@ class CanvasTile:
             and not self.enemy
         ):
             self.is_empty = True
+
+    def get_water(self):
+        return "bottom" if not self.water_on_top else "top"
+
+    def get_terrain(self):
+        return "".join(self.terrain_neighbors)
 
 
 class CanvasObject(pygame.sprite.Sprite):
